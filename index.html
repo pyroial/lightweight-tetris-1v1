@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lightweight Tetris Game</title>
+  <style>
+    :root {
+      /* board and side widths */
+      --board-w: 300px;
+      --board-h: 600px;
+      /* two side columns for status + queue and for settings/keybinds/tests */
+      --sideL-w: 430px;
+      --sideR-w: 360px;
+      /* colours */
+      --bg: #0d0f13;
+      --fg: #e8eef9;
+      --muted: #9fb3c8;
+      --accent: #6aa9ff;
+      --panel-bg: #131822;
+      --panel-border: #1b2433;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .wrap {
+      display: grid;
+      grid-template-columns: var(--board-w) var(--sideL-w) var(--sideR-w);
+      gap: 32px;
+      padding: 32px;
+    }
+    /* board wrapper */
+    #boardWrap {
+      position: relative;
+      width: var(--board-w);
+      height: var(--board-h);
+    }
+    #board {
+      width: 100%;
+      height: 100%;
+      background: #0a0f17;
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      display: block;
+    }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: rgba(6, 10, 16, 0.7);
+      border-radius: 12px;
+    }
+    #overlay h2 {
+      margin: 0 0 6px;
+    }
+    /* left side (status + queue + controls) */
+    .sideL {
+      height: var(--board-h);
+      width: var(--sideL-w);
+      display: grid;
+      grid-template-rows: auto auto auto 1fr;
+      gap: 12px;
+    }
+    /* right side (settings, keybinds, tests) */
+    .sideR {
+      height: var(--board-h);
+      width: var(--sideR-w);
+      display: flex;
+      flex-direction: column;
+    }
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .panel h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px dashed #223047;
+    }
+    .stat:last-child {
+      border-bottom: 0;
+    }
+    .btns {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      background: #1b263b;
+      color: var(--fg);
+      border: 1px solid #223047;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover {
+      border-color: var(--accent);
+    }
+    /* modes buttons */
+    .modegroup {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .modegroup button[aria-pressed="true"] {
+      outline: 2px solid var(--accent);
+    }
+    /* queue grid: hold + 3 next pieces */
+    .queueGrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 8px;
+    }
+    .mini-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 86px;
+      background: #0b0f17;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+    }
+    canvas.mini {
+      width: 112px;
+      height: 72px;
+      image-rendering: pixelated;
+    }
+    /* tab navigation */
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .tabs button[aria-selected="true"] {
+      outline: 2px solid var(--accent);
+    }
+    .tabpanel {
+      height: calc(100% - 34px);
+      border: 1px dashed #223047;
+      border-radius: 10px;
+      padding: 10px;
+      overflow: hidden;
+    }
+    .tabpage {
+      display: none;
+      height: 100%;
+    }
+    .tabpage[aria-hidden="false"] {
+      display: block;
+    }
+    .setgrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .field label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .field input[type="number"] {
+      width: 100%;
+      padding: 7px 9px;
+      border-radius: 8px;
+      border: 1px solid #2a3853;
+      background: #192336;
+      color: var(--fg);
+    }
+    /* keybind inputs */
+    .keygrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .keygrid .field input {
+      width: 100%;
+      padding: 7px 9px;
+      border-radius: 8px;
+      border: 1px solid #2a3853;
+      background: #192336;
+      color: var(--fg);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .helper {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    /* test output */
+    .testout {
+      height: 100%;
+      background: #0b0f17;
+      border: 1px solid #25324a;
+      border-radius: 8px;
+      padding: 8px;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    /* responsive fallback: stack side panels below board on narrow screens */
+    @media (max-width: 900px) {
+      .wrap {
+        grid-template-columns: 1fr;
+      }
+      .sideL, .sideR {
+        width: var(--board-w);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="boardWrap">
+      <canvas id="board" aria-label="Tetris board"></canvas>
+      <div id="overlay">
+        <div>
+          <h2 id="ov-title">Paused</h2>
+          <div id="ov-sub" style="color:var(--muted)"></div>
+          <div class="btns" style="margin-top:8px; justify-content:center">
+            <button id="resumeBtn">Resume (P)</button>
+            <button id="newBtn">New (N)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- left side: status + queue + bottom controls -->
+    <div class="sideL">
+      <!-- status panel -->
+      <div class="panel">
+        <h3>Status</h3>
+        <div class="stat"><span>Score</span><strong id="score">0</strong></div>
+        <div class="stat"><span>High</span><strong id="high">0</strong></div>
+        <div class="stat"><span>PB</span><strong id="pb">—</strong></div>
+        <div class="stat"><span id="timelabel">Time</span><strong id="time">00:00.0</strong></div>
+        <div class="stat"><span>Level</span><strong id="level">1</strong></div>
+        <div class="stat"><span>Lines</span><strong id="lines">0</strong></div>
+        <div class="modegroup" role="group" aria-label="Mode">
+          <button id="mode-marathon" aria-pressed="true">Marathon</button>
+          <button id="mode-sprint" aria-pressed="false">Sprint 40L</button>
+          <button id="mode-ultra" aria-pressed="false">Ultra 2:00</button>
+        </div>
+      </div>
+      <!-- queue panel -->
+      <div class="panel">
+        <h3>Hold / Next</h3>
+        <div class="queueGrid">
+          <div class="mini-box"><canvas id="hold" class="mini" width="112" height="72"></canvas></div>
+          <div class="mini-box"><canvas id="q0" class="mini" width="112" height="72"></canvas></div>
+          <div class="mini-box"><canvas id="q1" class="mini" width="112" height="72"></canvas></div>
+          <div class="mini-box"><canvas id="q2" class="mini" width="112" height="72"></canvas></div>
+        </div>
+      </div>
+      <!-- bottom controls -->
+      <div class="panel" style="margin-top:auto">
+        <div class="btns" style="justify-content:space-between">
+          <div class="btns">
+            <button id="pauseBtn">Pause (P)</button>
+            <button id="newBtn2">New (N)</button>
+          </div>
+          <button id="testBtn">Run Tests (T)</button>
+        </div>
+      </div>
+    </div>
+    <!-- right side: settings / keybinds / tests -->
+    <div class="sideR">
+      <div class="panel" style="flex:1; display:flex; flex-direction:column">
+        <div class="tabs" role="tablist" aria-label="Panels">
+          <button id="tab-settings" role="tab" aria-selected="true">Settings</button>
+          <button id="tab-keys" role="tab" aria-selected="false">Keybinds</button>
+          <button id="tab-tests" role="tab" aria-selected="false">Tests</button>
+        </div>
+        <div class="tabpanel">
+          <!-- Settings tab -->
+          <section id="page-settings" class="tabpage" role="tabpanel" aria-hidden="false">
+            <div class="setgrid">
+              <div class="field"><label for="das">DAS (ms)</label><input id="das" type="number" min="0" step="1" value="150"></div>
+              <div class="field"><label for="arr">ARR (ms)</label><input id="arr" type="number" min="0" step="1" value="40"></div>
+              <div class="field"><label for="sdr">Soft Drop Repeat (ms)</label><input id="sdr" type="number" min="0" step="1" value="40"></div>
+              <div class="field"><label for="lockDelay">Lock Delay (ms)</label><input id="lockDelay" type="number" min="0" step="1" value="500"></div>
+              <div class="field"><label for="lockResets">Lock Reset Limit</label><input id="lockResets" type="number" min="0" step="1" value="15"></div>
+            </div>
+            <div class="btns" style="margin-top:10px">
+              <button id="saveSettings">Save Settings</button>
+              <button id="defaultsSettings">Defaults</button>
+            </div>
+            <div class="helper">Tip: set ARR=0 for instant horizontal movement (Guideline feel).</div>
+          </section>
+          <!-- Keybinds tab -->
+          <section id="page-keys" class="tabpage" role="tabpanel" aria-hidden="true">
+            <div class="keygrid">
+              <div class="field"><label for="kLeft">Left</label><input id="kLeft" class="key-input" readonly></div>
+              <div class="field"><label for="kRight">Right</label><input id="kRight" class="key-input" readonly></div>
+              <div class="field"><label for="kSoft">Soft Drop</label><input id="kSoft" class="key-input" readonly></div>
+              <div class="field"><label for="kHard">Hard Drop</label><input id="kHard" class="key-input" readonly></div>
+              <div class="field"><label for="kCW">Rotate CW</label><input id="kCW" class="key-input" readonly></div>
+              <div class="field"><label for="kCCW">Rotate CCW</label><input id="kCCW" class="key-input" readonly></div>
+              <div class="field"><label for="kHold">Hold</label><input id="kHold" class="key-input" readonly></div>
+              <div class="field"><label for="kPause">Pause</label><input id="kPause" class="key-input" readonly></div>
+              <div class="field"><label for="kNew">New Game</label><input id="kNew" class="key-input" readonly></div>
+              <div class="field"><label for="kTest">Run Tests</label><input id="kTest" class="key-input" readonly></div>
+            </div>
+            <div class="btns" style="margin-top:10px">
+              <button id="saveKeys">Save Keys</button>
+              <button id="defaultKeys">Default Keys</button>
+            </div>
+            <div class="helper">Click a field, then press a key. While a field is focused, game input is ignored.</div>
+          </section>
+          <!-- Tests tab -->
+          <section id="page-tests" class="tabpage" role="tabpanel" aria-hidden="true">
+            <div class="testout" id="testout">Press T (or click Run Tests) to run tests…</div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+  (() => {
+    /*** Setup for high-DPI canvases (makes 1 CSS pixel = 1 device pixel) ***/
+    function setupHiDPICanvas(canvas, cssW, cssH) {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      canvas.style.width = cssW + 'px';
+      canvas.style.height = cssH + 'px';
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return ctx;
+    }
+
+    /*** Game constants and initial settings ***/
+    const COLS = 10;
+    const ROWS = 20;
+    const TILE = 30;
+    const COLORS = {
+      I: '#62d6ff', O: '#ffd966', T: '#c18cff',
+      S: '#7ee083', Z: '#ff7a7a', J: '#74a7ff', L: '#ffb36b', G: '#0f1624'
+    };
+    const SCORE_TABLE = { 1: 100, 2: 300, 3: 500, 4: 800 };
+    const LINES_PER_LEVEL = 10;
+    const DROP_SPEEDS = [0,800,700,600,520,450,390,340,300,265,235,210,190,175,160];
+    const DEFAULT_SETTINGS = { das: 150, arr: 40, sdr: 40, lockDelay: 500, lockResets: 15 };
+
+    /*** Tetromino definitions and rotation tables ***/
+    const SHAPES = {
+      I: [[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]]],
+      O: [[[1,1],[1,1]]],
+      T: [[[0,1,0],[1,1,1],[0,0,0]]],
+      S: [[[0,1,1],[1,1,0],[0,0,0]]],
+      Z: [[[1,1,0],[0,1,1],[0,0,0]]],
+      J: [[[1,0,0],[1,1,1],[0,0,0]]],
+      L: [[[0,0,1],[1,1,1],[0,0,0]]]
+    };
+    function rotCW(m) {
+      const h = m.length, w = m[0].length;
+      const out = Array.from({ length: w }, () => Array(h).fill(0));
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          out[x][h - 1 - y] = m[y][x];
+        }
+      }
+      return out;
+    }
+    // precompute 4 rotations for each shape
+    const ROT = {};
+    for (const [k, [seed]] of Object.entries(SHAPES)) {
+      ROT[k] = [seed];
+      for (let i = 0; i < 3; i++) ROT[k].push(rotCW(ROT[k][i]));
+    }
+    // SRS kick tables for JLSTZ and I (O has no kicks)
+    const JLSTZ_KICKS = {
+      '0>1': [[0,0], [-1,0], [-1,1], [0,-2], [-1,-2]],
+      '1>2': [[0,0], [1,0], [1,-1], [0,2], [1,2]],
+      '2>3': [[0,0], [1,0], [1,1], [0,-2], [1,-2]],
+      '3>0': [[0,0], [-1,0], [-1,-1], [0,2], [-1,2]],
+      '1>0': [[0,0], [1,0], [1,-1], [0,2], [1,2]],
+      '2>1': [[0,0], [-1,0], [-1,1], [0,-2], [-1,-2]],
+      '3>2': [[0,0], [-1,0], [-1,-1], [0,2], [-1,2]],
+      '0>3': [[0,0], [1,0], [1,1], [0,-2], [1,-2]]
+    };
+    const I_KICKS = {
+      '0>1': [[0,0], [-2,0], [1,0], [-2,-1], [1,2]],
+      '1>2': [[0,0], [-1,0], [2,0], [-1,2], [2,-1]],
+      '2>3': [[0,0], [2,0], [-1,0], [2,1], [-1,-2]],
+      '3>0': [[0,0], [1,0], [-2,0], [1,-2], [-2,1]],
+      '1>0': [[0,0], [2,0], [-1,0], [2,1], [-1,-2]],
+      '2>1': [[0,0], [1,0], [-2,0], [1,-2], [-2,1]],
+      '3>2': [[0,0], [-2,0], [1,0], [-2,-1], [1,2]],
+      '0>3': [[0,0], [-1,0], [2,0], [-1,2], [2,-1]]
+    };
+    function kicksFor(type, from, to) {
+      if (type === 'O') return [[0,0]];
+      // convert from/to to 0..3; from is current rotation index, to is desired
+      const key = `${from}>${to}`;
+      return type === 'I' ? (I_KICKS[key] || [[0,0]]) : (JLSTZ_KICKS[key] || [[0,0]]);
+    }
+
+    /*** Random 7-bag generator ***/
+    function rngShuffle(a) {
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+    function* bagGen() {
+      const keys = Object.keys(SHAPES);
+      while (true) {
+        const bag = rngShuffle(keys.slice());
+        for (const k of bag) yield k;
+      }
+    }
+
+    /*** DOM references ***/
+    const bcanvas = document.getElementById('board');
+    const bctx = setupHiDPICanvas(bcanvas, 300, 600);
+    const overlay = document.getElementById('overlay');
+    const ovTitle = document.getElementById('ov-title');
+    const ovSub = document.getElementById('ov-sub');
+
+    const UI = {
+      score: document.getElementById('score'),
+      high: document.getElementById('high'),
+      pb: document.getElementById('pb'),
+      level: document.getElementById('level'),
+      lines: document.getElementById('lines'),
+      timeLabel: document.getElementById('timelabel'),
+      time: document.getElementById('time'),
+      modes: {
+        marathon: document.getElementById('mode-marathon'),
+        sprint: document.getElementById('mode-sprint'),
+        ultra: document.getElementById('mode-ultra')
+      },
+      q: [document.getElementById('q0'), document.getElementById('q1'), document.getElementById('q2')],
+      hold: document.getElementById('hold'),
+      btns: {
+        resume: document.getElementById('resumeBtn'),
+        pause: document.getElementById('pauseBtn'),
+        new1: document.getElementById('newBtn'),
+        new2: document.getElementById('newBtn2'),
+        test: document.getElementById('testBtn')
+      },
+      tabs: {
+        settings: document.getElementById('tab-settings'),
+        keys: document.getElementById('tab-keys'),
+        tests: document.getElementById('tab-tests')
+      },
+      pages: {
+        settings: document.getElementById('page-settings'),
+        keys: document.getElementById('page-keys'),
+        tests: document.getElementById('page-tests')
+      },
+      setInputs: {
+        das: document.getElementById('das'),
+        arr: document.getElementById('arr'),
+        sdr: document.getElementById('sdr'),
+        lockDelay: document.getElementById('lockDelay'),
+        lockResets: document.getElementById('lockResets'),
+        save: document.getElementById('saveSettings'),
+        defaults: document.getElementById('defaultsSettings')
+      },
+      keyInputs: {
+        Left: document.getElementById('kLeft'),
+        Right: document.getElementById('kRight'),
+        Soft: document.getElementById('kSoft'),
+        Hard: document.getElementById('kHard'),
+        CW: document.getElementById('kCW'),
+        CCW: document.getElementById('kCCW'),
+        Hold: document.getElementById('kHold'),
+        Pause: document.getElementById('kPause'),
+        New: document.getElementById('kNew'),
+        Test: document.getElementById('kTest'),
+        save: document.getElementById('saveKeys'),
+        defaults: document.getElementById('defaultKeys')
+      },
+      out: document.getElementById('testout')
+    };
+    // mini canvases for hold & next pieces
+    const miniCtx = new Map();
+    [UI.hold, ...UI.q].forEach(c => miniCtx.set(c, setupHiDPICanvas(c, c.width, c.height)));
+
+    /*** Persist settings and keymap ***/
+    function loadSettings() {
+      try {
+        const s = JSON.parse(localStorage.getItem('tetrisSettings') || '{}');
+        return { ...DEFAULT_SETTINGS, ...s };
+      } catch { return { ...DEFAULT_SETTINGS }; }
+    }
+    function saveSettings(settings) {
+      localStorage.setItem('tetrisSettings', JSON.stringify(settings));
+    }
+    const DEFAULT_KEYMAP = {
+      Left: 'ArrowLeft', Right: 'ArrowRight', Soft: 'ArrowDown', Hard: 'Space',
+      CW: 'ArrowUp', CCW: 'Z', Hold: 'C', Pause: 'P', New: 'N', Test: 'T'
+    };
+    function loadKeymap() {
+      try {
+        const km = JSON.parse(localStorage.getItem('tetrisKeymap') || '{}');
+        return { ...DEFAULT_KEYMAP, ...km };
+      } catch { return { ...DEFAULT_KEYMAP }; }
+    }
+    function saveKeymap(map) {
+      localStorage.setItem('tetrisKeymap', JSON.stringify(map));
+    }
+
+    /*** Game state ***/
+    const settings = loadSettings();
+    let KEYMAP = loadKeymap();
+    const state = {
+      board: Array.from({ length: ROWS }, () => Array(COLS).fill(0)),
+      cur: null,
+      queue: [],
+      bag: bagGen(),
+      hold: null,
+      canHold: true,
+      score: 0,
+      lines: 0,
+      level: 1,
+      dropDelay: DROP_SPEEDS[1],
+      gameOver: false,
+      paused: false,
+      lastDropAt: 0,
+      lastTick: 0,
+      input: {
+        left: { down: false, at: 0, next: 0 },
+        right: { down: false, at: 0, next: 0 },
+        down: { down: false, at: 0, next: 0 }
+      },
+      onGround: false,
+      lockTimer: 0,
+      lockResets: 0,
+      pendingRows: null,
+      clearUntil: 0,
+      // modes
+      mode: 'marathon',
+      elapsed: 0,
+      ultraLeft: 120000,
+      startTime: 0
+    };
+
+    /*** Helper functions ***/
+    function clone(o) { return JSON.parse(JSON.stringify(o)); }
+    function fmtTime(ms) {
+      const t = Math.max(0, ms);
+      const m = Math.floor(t / 60000);
+      const s = ((t % 60000) / 1000);
+      return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`;
+    }
+    function drawCell(x, y, color, alpha = 1) {
+      const px = x * TILE;
+      const py = y * TILE;
+      bctx.globalAlpha = alpha;
+      bctx.fillStyle = color;
+      bctx.fillRect(px, py, TILE, TILE);
+      bctx.globalAlpha = 1;
+      bctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      bctx.strokeRect(px + 0.5, py + 0.5, TILE - 1, TILE - 1);
+    }
+    function renderMini(canvas, type) {
+      const ctx = miniCtx.get(canvas);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!type) return;
+      const m = ROT[type][0];
+      const cell = 14;
+      const dpr = window.devicePixelRatio || 1;
+      const w = m[0].length * cell;
+      const h = m.length * cell;
+      const ox = Math.floor(((canvas.width / dpr) - w) / 2);
+      const oy = Math.floor(((canvas.height / dpr) - h) / 2);
+      ctx.fillStyle = COLORS[type];
+      for (let y = 0; y < m.length; y++) {
+        for (let x = 0; x < m[0].length; x++) {
+          if (m[y][x]) ctx.fillRect(ox + x * cell, oy + y * cell, cell - 2, cell - 2);
+        }
+      }
+    }
+    function updateQueueUI() {
+      renderMini(UI.hold, state.hold);
+      renderMini(UI.q[0], state.queue[0]);
+      renderMini(UI.q[1], state.queue[1]);
+      renderMini(UI.q[2], state.queue[2]);
+    }
+    function updateHigh() {
+      const hi = Number(localStorage.getItem('tetrisHighScore') || 0);
+      if (state.score > hi) localStorage.setItem('tetrisHighScore', String(state.score));
+    }
+    function updatePB(finalize = false) {
+      if (state.mode === 'sprint') {
+        const ms = state.elapsed | 0;
+        const best = Number(localStorage.getItem('pb_sprint_ms') || 0);
+        if (finalize && (best === 0 || ms < best)) localStorage.setItem('pb_sprint_ms', String(ms));
+      } else if (state.mode === 'ultra') {
+        const best = Number(localStorage.getItem('pb_ultra_score') || 0);
+        if (finalize && state.score > best) localStorage.setItem('pb_ultra_score', String(state.score));
+      }
+    }
+    function modePBText() {
+      if (state.mode === 'sprint') {
+        const ms = Number(localStorage.getItem('pb_sprint_ms') || 0);
+        return ms ? fmtTime(ms) : '—';
+      }
+      if (state.mode === 'ultra') {
+        const s = Number(localStorage.getItem('pb_ultra_score') || 0);
+        return s ? s.toLocaleString() : '—';
+      }
+      return '—';
+    }
+    function updatePanels() {
+      UI.score.textContent = state.score.toLocaleString();
+      UI.level.textContent = state.level;
+      UI.lines.textContent = state.lines;
+      UI.high.textContent = (Number(localStorage.getItem('tetrisHighScore') || 0)).toLocaleString();
+      UI.pb.textContent = modePBText();
+      if (state.mode === 'ultra') {
+        UI.timeLabel.textContent = 'Time Left';
+        UI.time.textContent = fmtTime(state.ultraLeft);
+      } else {
+        UI.timeLabel.textContent = 'Time';
+        UI.time.textContent = fmtTime(state.elapsed);
+      }
+      updateQueueUI();
+    }
+    function showOverlay(title, sub = '') {
+      ovTitle.textContent = title;
+      ovSub.textContent = sub;
+      overlay.style.display = 'flex';
+    }
+    function hideOverlay() { overlay.style.display = 'none'; }
+
+    /*** Collision detection and movement helpers ***/
+    function collides(nx, ny, mat) {
+      for (let y = 0; y < mat.length; y++) {
+        for (let x = 0; x < mat[0].length; x++) {
+          if (!mat[y][x]) continue;
+          const X = nx + x;
+          const Y = ny + y;
+          if (X < 0 || X >= COLS || Y >= ROWS) return true;
+          if (Y >= 0 && state.board[Y][X]) return true;
+        }
+      }
+      return false;
+    }
+    function tryMove(dx, dy) {
+      const { x, y, m } = state.cur;
+      if (!collides(x + dx, y + dy, m)) {
+        state.cur.x += dx;
+        state.cur.y += dy;
+        return true;
+      }
+      return false;
+    }
+    function tryRotate(dir = 1) {
+      const c = state.cur;
+      const from = c.rot;
+      const to = (c.rot + (dir > 0 ? 1 : 3)) % 4;
+      const nm = ROT[c.type][to];
+      const kicks = kicksFor(c.type, from, to);
+      for (const [kx, ky] of kicks) {
+        if (!collides(c.x + kx, c.y + ky, nm)) {
+          c.rot = to;
+          c.m = clone(nm);
+          c.x += kx;
+          c.y += ky;
+          return true;
+        }
+      }
+      return false;
+    }
+    function softDrop() {
+      if (tryMove(0, 1)) {
+        state.score += 1;
+      } else {
+        land(false);
+      }
+    }
+    function hardDrop() {
+      let cells = 0;
+      while (tryMove(0, 1)) cells++;
+      state.score += cells * 2;
+      land(true);
+    }
+    function hold() {
+      if (!state.canHold) return;
+      const current = state.cur.type;
+      if (state.hold == null) {
+        state.hold = current;
+        state.cur = null;
+        spawn();
+      } else {
+        const tmp = state.hold;
+        state.hold = current;
+        state.cur = null;
+        const type = tmp;
+        state.cur = { type, rot: 0, x: Math.floor(COLS / 2) - 2, y: 0, m: clone(ROT[type][0]) };
+        if (collides(state.cur.x, state.cur.y, state.cur.m)) endGame();
+      }
+      state.canHold = false;
+      updateQueueUI();
+    }
+
+    /*** Line clearing and lock handling ***/
+    function fullRows() {
+      const rows = [];
+      for (let y = 0; y < ROWS; y++) {
+        if (state.board[y].every(Boolean)) rows.push(y);
+      }
+      return rows;
+    }
+    function applyRowClear(rows) {
+      const cleared = rows.length;
+      state.lines += cleared;
+      state.score += (SCORE_TABLE[cleared] || 0) * state.level;
+      const newLevel = 1 + Math.floor(state.lines / LINES_PER_LEVEL);
+      if (newLevel !== state.level) {
+        state.level = Math.min(newLevel, DROP_SPEEDS.length - 1);
+        state.dropDelay = DROP_SPEEDS[state.level];
+      }
+      // remove rows
+      for (const y of rows) {
+        state.board.splice(y, 1);
+        state.board.unshift(Array(COLS).fill(0));
+      }
+      updateModeProgress(cleared);
+    }
+    function merge() {
+      const { x, y, m, type } = state.cur;
+      for (let j = 0; j < m.length; j++) {
+        for (let i = 0; i < m[0].length; i++) {
+          if (m[j][i]) {
+            const Y = y + j;
+            if (Y >= 0) state.board[Y][x + i] = type;
+          }
+        }
+      }
+    }
+    function land(force) {
+      if (!force) {
+        // start or continue lock delay
+        if (!state.onGround) {
+          state.onGround = true;
+          state.lockTimer = performance.now();
+        } else {
+          const elapsed = performance.now() - state.lockTimer;
+          if (elapsed < settings.lockDelay) return; // still delaying
+        }
+      }
+      // lock piece now
+      merge();
+      const rows = fullRows();
+      if (rows.length) {
+        if (!state.pendingRows) {
+          state.pendingRows = rows;
+          state.clearUntil = performance.now() + 140; // flash for 140ms
+          state.cur = null; // hold spawn until after animation
+        }
+      } else {
+        spawn();
+      }
+    }
+    function onGroundReset() {
+      if (state.onGround && state.lockResets < settings.lockResets) {
+        state.lockTimer = performance.now();
+        state.lockResets++;
+      }
+    }
+
+    /*** Spawning and queue management ***/
+    function nextFromQueue() {
+      if (state.queue.length < 3) {
+        for (let i = 0; i < 3; i++) state.queue.push(state.bag.next().value);
+      }
+      return state.queue.shift();
+    }
+    function spawn() {
+      const type = nextFromQueue();
+      state.cur = { type, rot: 0, x: Math.floor(COLS / 2) - 2, y: 0, m: clone(ROT[type][0]) };
+      state.canHold = true;
+      state.onGround = false;
+      state.lockTimer = 0;
+      state.lockResets = 0;
+      if (collides(state.cur.x, state.cur.y, state.cur.m)) {
+        endGame();
+      }
+      updateQueueUI();
+    }
+
+    function endGame() {
+      state.gameOver = true;
+      updateHigh();
+      updatePB(true);
+      showOverlay('Game Over', `Score ${state.score.toLocaleString()}`);
+    }
+
+    /*** Mode handling ***/
+    function updateModeProgress(cleared) {
+      if (state.mode === 'sprint') {
+        if (state.lines >= 40) {
+          updatePB(true);
+          showOverlay('Sprint Complete', fmtTime(state.elapsed));
+          state.gameOver = true;
+        }
+      }
+      // ultra handled in timer
+    }
+    function setMode(m) {
+      state.mode = m;
+      UI.modes.marathon.setAttribute('aria-pressed', m === 'marathon');
+      UI.modes.sprint.setAttribute('aria-pressed', m === 'sprint');
+      UI.modes.ultra.setAttribute('aria-pressed', m === 'ultra');
+      reset(true);
+    }
+
+    /*** Drawing ***/
+    function draw() {
+      bctx.clearRect(0, 0, 300, 600);
+      // board cells
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const c = state.board[y][x];
+          drawCell(x, y, c ? COLORS[c] : COLORS.G, c ? 1 : 0.15);
+        }
+      }
+      // flash cleared rows
+      if (state.pendingRows) {
+        const t = state.clearUntil - performance.now();
+        const a = Math.max(0, Math.min(1, t / 140));
+        bctx.fillStyle = `rgba(255,255,255,${0.35 * a})`;
+        for (const y of state.pendingRows) {
+          bctx.fillRect(0, y * TILE, COLS * TILE, TILE);
+        }
+      }
+      // ghost piece
+      if (state.cur) {
+        const g = { x: state.cur.x, y: state.cur.y, m: state.cur.m };
+        while (!collides(g.x, g.y + 1, g.m)) g.y++;
+        for (let j = 0; j < g.m.length; j++) {
+          for (let i = 0; i < g.m[0].length; i++) {
+            if (g.m[j][i]) drawCell(g.x + i, g.y + j, '#fff', 0.08);
+          }
+        }
+        // current piece
+        const { x, y, m, type } = state.cur;
+        for (let j = 0; j < m.length; j++) {
+          for (let i = 0; i < m[0].length; i++) {
+            if (m[j][i]) drawCell(x + i, y + j, COLORS[type]);
+          }
+        }
+      }
+    }
+
+    /*** Input handling (with DAS/ARR/SDR) ***/
+    function actionForKey(key) {
+      for (const [act, k] of Object.entries(KEYMAP)) {
+        if ((k === 'Space' && key === ' ') || key === k) return act;
+      }
+      return null;
+    }
+    const isKeyField = () => document.activeElement && document.activeElement.classList.contains('key-input');
+    function press(which, now) {
+      const cfg = which === 'down' ? { das: 0, arr: settings.sdr } : { das: settings.das, arr: settings.arr };
+      state.input[which].down = true;
+      state.input[which].at = now;
+      state.input[which].next = now + cfg.das;
+    }
+    function release(which) {
+      state.input[which].down = false;
+    }
+    document.addEventListener('keydown', e => {
+      if (isKeyField()) return;
+      const act = actionForKey(e.key);
+      if (!act) return;
+      if (state.paused && !['Pause','New','Test'].includes(act)) return;
+      if (state.gameOver && !['New','Test'].includes(act)) return;
+      const now = performance.now();
+      switch (act) {
+        case 'Left':
+          if (!state.input.left.down) { tryMove(-1, 0); onGroundReset(); }
+          press('left', now);
+          break;
+        case 'Right':
+          if (!state.input.right.down) { tryMove(1, 0); onGroundReset(); }
+          press('right', now);
+          break;
+        case 'Soft':
+          softDrop();
+          press('down', now);
+          break;
+        case 'Hard':
+          e.preventDefault();
+          hardDrop();
+          break;
+        case 'CW':
+          tryRotate(1);
+          onGroundReset();
+          break;
+        case 'CCW':
+          tryRotate(-1);
+          onGroundReset();
+          break;
+        case 'Hold':
+          hold();
+          break;
+        case 'Pause':
+          togglePause();
+          break;
+        case 'New':
+          reset(true);
+          break;
+        case 'Test':
+          runTests();
+          break;
+      }
+      updatePanels();
+    });
+    document.addEventListener('keyup', e => {
+      const act = actionForKey(e.key);
+      if (!act) return;
+      switch (act) {
+        case 'Left': release('left'); break;
+        case 'Right': release('right'); break;
+        case 'Soft': release('down'); break;
+      }
+    });
+
+    function handleAutoRepeat(now) {
+      // choose horizontal based on last pressed
+      const i = state.input;
+      const horiz = (i.left.down && i.right.down) ? (i.left.at > i.right.at ? 'left' : 'right') : (i.left.down ? 'left' : i.right.down ? 'right' : null);
+      if (horiz) {
+        const cfg = { das: settings.das, arr: settings.arr };
+        if (now >= i[horiz].next) {
+          tryMove(horiz === 'left' ? -1 : 1, 0);
+          onGroundReset();
+          i[horiz].next = now + (cfg.arr || 0);
+        }
+      }
+      // soft drop repeat
+      if (i.down.down) {
+        const cfg = { arr: settings.sdr };
+        if (now >= i.down.next) {
+          softDrop();
+          i.down.next = now + (cfg.arr || 0);
+        }
+      }
+    }
+
+    /*** Game loop ***/
+    function tick(ts) {
+      if (state.paused || state.gameOver) return;
+      if (!state.lastTick) state.lastTick = ts;
+      const dt = ts - state.lastTick;
+      state.lastTick = ts;
+      // update timers
+      if (state.mode === 'ultra') {
+        state.ultraLeft = Math.max(0, state.ultraLeft - dt);
+        if (state.ultraLeft === 0) {
+          updatePB(true);
+          showOverlay('Ultra Finished', `Score ${state.score.toLocaleString()}`);
+          state.gameOver = true;
+        }
+      } else {
+        state.elapsed += dt;
+      }
+      // line clear animation completion
+      if (state.pendingRows && performance.now() >= state.clearUntil) {
+        applyRowClear(state.pendingRows);
+        state.pendingRows = null;
+        spawn();
+      }
+      // gravity
+      if (state.cur) {
+        if (!state.lastDropAt) state.lastDropAt = ts;
+        const due = ts - state.lastDropAt >= state.dropDelay;
+        if (due) {
+          if (!tryMove(0, 1)) {
+            land(false);
+          } else {
+            state.onGround = false;
+          }
+          state.lastDropAt = ts;
+        }
+        handleAutoRepeat(ts);
+      }
+      draw();
+      updatePanels();
+      requestAnimationFrame(tick);
+    }
+
+    /*** Tabs switching ***/
+    function wireTabs() {
+      const pairs = [ ['settings','page-settings'], ['keys','page-keys'], ['tests','page-tests'] ];
+      for (const [t, p] of pairs) {
+        UI.tabs[t].addEventListener('click', () => {
+          for (const [t2, p2] of pairs) {
+            UI.tabs[t2].setAttribute('aria-selected', t2 === t);
+            UI.pages[t2].setAttribute('aria-hidden', t2 === t ? 'false' : 'true');
+          }
+        });
+      }
+    }
+
+    /*** Settings UI ***/
+    function applySettings() {
+      settings.das = clampInt(UI.setInputs.das.value, 0, 1000);
+      settings.arr = clampInt(UI.setInputs.arr.value, 0, 1000);
+      settings.sdr = clampInt(UI.setInputs.sdr.value, 0, 1000);
+      settings.lockDelay = clampInt(UI.setInputs.lockDelay.value, 0, 2000);
+      settings.lockResets = clampInt(UI.setInputs.lockResets.value, 0, 30);
+      saveSettings(settings);
+    }
+    UI.setInputs.save.onclick = () => {
+      applySettings();
+    };
+    UI.setInputs.defaults.onclick = () => {
+      Object.assign(settings, DEFAULT_SETTINGS);
+      saveSettings(settings);
+      UI.setInputs.das.value = settings.das;
+      UI.setInputs.arr.value = settings.arr;
+      UI.setInputs.sdr.value = settings.sdr;
+      UI.setInputs.lockDelay.value = settings.lockDelay;
+      UI.setInputs.lockResets.value = settings.lockResets;
+    };
+    // initialize settings inputs
+    UI.setInputs.das.value = settings.das;
+    UI.setInputs.arr.value = settings.arr;
+    UI.setInputs.sdr.value = settings.sdr;
+    UI.setInputs.lockDelay.value = settings.lockDelay;
+    UI.setInputs.lockResets.value = settings.lockResets;
+
+    /*** Keybinds UI ***/
+    function applyKeymapToInputs() {
+      UI.keyInputs.Left.value = humanKeyStr(KEYMAP.Left);
+      UI.keyInputs.Right.value = humanKeyStr(KEYMAP.Right);
+      UI.keyInputs.Soft.value = humanKeyStr(KEYMAP.Soft);
+      UI.keyInputs.Hard.value = humanKeyStr(KEYMAP.Hard);
+      UI.keyInputs.CW.value = humanKeyStr(KEYMAP.CW);
+      UI.keyInputs.CCW.value = humanKeyStr(KEYMAP.CCW);
+      UI.keyInputs.Hold.value = humanKeyStr(KEYMAP.Hold);
+      UI.keyInputs.Pause.value = humanKeyStr(KEYMAP.Pause);
+      UI.keyInputs.New.value = humanKeyStr(KEYMAP.New);
+      UI.keyInputs.Test.value = humanKeyStr(KEYMAP.Test);
+      // clear any staged dataset values
+      for (const el of document.querySelectorAll('.key-input')) delete el.dataset.key;
+    }
+    function humanKeyStr(k) {
+      return k === ' ' ? 'Space' : k;
+    }
+    function clampInt(v, min, max) {
+      let n = parseInt(v, 10);
+      if (isNaN(n)) n = min;
+      return Math.max(min, Math.min(max, n));
+    }
+    // focus and capture key binds
+    for (const act of Object.keys(UI.keyInputs)) {
+      if (['save','defaults'].includes(act)) continue;
+      const input = UI.keyInputs[act];
+      input.addEventListener('focus', () => { input.value = '(press key)'; });
+      input.addEventListener('keydown', e => {
+        e.preventDefault();
+        input.value = humanKeyStr(e.key);
+        input.dataset.key = e.key === ' ' ? 'Space' : e.key;
+      });
+    }
+    UI.keyInputs.save.onclick = () => {
+      const next = { ...KEYMAP };
+      for (const act of Object.keys(UI.keyInputs)) {
+        if (['save','defaults'].includes(act)) continue;
+        const inp = UI.keyInputs[act];
+        if (inp.dataset.key) next[act] = inp.dataset.key === 'Space' ? ' ' : inp.dataset.key;
+      }
+      KEYMAP = next;
+      saveKeymap(KEYMAP);
+      applyKeymapToInputs();
+    };
+    UI.keyInputs.defaults.onclick = () => {
+      KEYMAP = { ...DEFAULT_KEYMAP };
+      saveKeymap(KEYMAP);
+      applyKeymapToInputs();
+    };
+    applyKeymapToInputs();
+
+    /*** Mode buttons ***/
+    UI.modes.marathon.onclick = () => setMode('marathon');
+    UI.modes.sprint.onclick = () => setMode('sprint');
+    UI.modes.ultra.onclick = () => setMode('ultra');
+    /*** Control buttons ***/
+    UI.btns.pause.onclick = () => togglePause();
+    UI.btns.resume.onclick = () => togglePause();
+    UI.btns.new1.onclick = () => reset(true);
+    UI.btns.new2.onclick = () => reset(true);
+    UI.btns.test.onclick = () => runTests();
+
+    /*** Pause toggle ***/
+    function togglePause() {
+      if (state.gameOver) return;
+      state.paused = !state.paused;
+      if (state.paused) {
+        showOverlay('Paused', 'Press Pause to resume');
+      } else {
+        hideOverlay();
+        state.lastDropAt = performance.now();
+        state.lastTick = 0;
+        requestAnimationFrame(tick);
+      }
+    }
+
+    /*** Reset game ***/
+    function reset(hard) {
+      // clear board
+      state.board.forEach(r => r.fill(0));
+      state.queue.length = 0;
+      for (let i = 0; i < 3; i++) state.queue.push(state.bag.next().value);
+      state.hold = null;
+      state.canHold = true;
+      state.score = 0;
+      state.lines = 0;
+      state.level = 1;
+      state.dropDelay = DROP_SPEEDS[1];
+      state.gameOver = false;
+      state.paused = false;
+      state.lastDropAt = 0;
+      state.lastTick = 0;
+      state.onGround = false;
+      state.lockTimer = 0;
+      state.lockResets = 0;
+      state.pendingRows = null;
+      state.clearUntil = 0;
+      state.elapsed = 0;
+      state.ultraLeft = 120000;
+      hideOverlay();
+      spawn();
+      updatePanels();
+      requestAnimationFrame(tick);
+    }
+
+    /*** Test harness ***/
+    function runTests() {
+      const tests = [];
+      function assert(name, cond) { tests.push({ name, ok: !!cond }); }
+      function same(a,b){ if(a.length!==b.length||a[0].length!==b[0].length) return false; for(let y=0;y<a.length;y++) for(let x=0;x<a[0].length;x++) if(a[y][x]!==b[y][x]) return false; return true; }
+      // 1. rotations wrap
+      for(const [t, rots] of Object.entries(ROT)) {
+        const r0 = rots[0];
+        let r = r0;
+        for(let i=0;i<4;i++) r = rotCW(r);
+        assert(`Rotations wrap (${t})`, same(r0,r));
+      }
+      // 2. overlay size matches board size
+      const ob = overlay.getBoundingClientRect();
+      const bb = bcanvas.getBoundingClientRect();
+      assert('Overlay matches board', Math.abs(ob.width - bb.width) < 1 && Math.abs(ob.height - bb.height) < 1);
+      // 3. 7-bag distribution over 21 pieces (3 bags)
+      const g = bagGen();
+      const count = { I:0,O:0,T:0,S:0,Z:0,J:0,L:0 };
+      for(let i=0;i<21;i++) count[g.next().value]++;
+      assert('7-bag distribution', Object.values(count).every(v=>v===3));
+      // 4. level increments after 10 lines
+      const saved = { board: clone(state.board), lines: state.lines, level: state.level, delay: state.dropDelay };
+      // fill bottom row
+      state.board[ROWS-1] = Array(COLS).fill('I');
+      state.lines = 9; state.level = 1; state.dropDelay = DROP_SPEEDS[1];
+      applyRowClear([ROWS-1]);
+      assert('Level becomes 2 after 10 lines', state.level === 2);
+      assert('Drop delay updated', state.dropDelay === DROP_SPEEDS[2]);
+      state.board = saved.board; state.lines = saved.lines; state.level = saved.level; state.dropDelay = saved.delay;
+      // 5. keymap persistence test
+      const prevKM = loadKeymap();
+      saveKeymap({ ...prevKM, Left: 'A' });
+      const loadedKM = loadKeymap();
+      assert('Keymap persisted Left=A', loadedKM.Left === 'A');
+      saveKeymap(prevKM);
+      // 6. settings persistence test
+      const prevS = loadSettings();
+      saveSettings({ ...prevS, das: 123 });
+      const loadedS = loadSettings();
+      assert('Settings persisted DAS=123', loadedS.das === 123);
+      saveSettings(prevS);
+      const ok = tests.filter(t=>t.ok).length;
+      UI.out.textContent = `${ok}/${tests.length} tests passed.\n` + tests.map(t => `${t.ok ? '✅' : '❌'} ${t.name}`).join('\n');
+    }
+
+    /*** Initial setup ***/
+    wireTabs();
+    // initial panel update
+    updatePanels();
+    // start game
+    reset(true);
+  })();
+  </script>
+</body>
+</html>
