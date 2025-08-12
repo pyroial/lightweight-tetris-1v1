@@ -301,6 +301,7 @@
           <button id="tab-settings" role="tab" aria-selected="true">Settings</button>
           <button id="tab-keys" role="tab" aria-selected="false">Keybinds</button>
           <button id="tab-tests" role="tab" aria-selected="false">Tests</button>
+          <button id="tab-multi" role="tab" aria-selected="false">Multiplayer</button>
         </div>
         <div class="tabpanel">
           <!-- Settings tab -->
@@ -342,6 +343,33 @@
           <section id="page-tests" class="tabpage" role="tabpanel" aria-hidden="true">
             <div class="testout" id="testout">Press T (or click Run Tests) to run tests…</div>
           </section>
+        <!-- Multiplayer tab -->
+        <section id="page-multi" class="tabpage" role="tabpanel" aria-hidden="true">
+          <div style="display:flex; flex-direction:column; height:100%; gap:10px;">
+            <!-- Connection controls -->
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <h4 style="margin:0; font-size:14px; color:var(--muted)">Connection</h4>
+              <div style="display:flex; gap:8px; flex-wrap:wrap">
+                <button id="hostBtn">Host</button>
+                <button id="joinBtn">Join</button>
+              </div>
+              <div id="multiStatus" style="font-size:13px; color:var(--muted)">Not connected</div>
+              <textarea id="offerField" placeholder="Offer / Answer data" style="width:100%; height:60px; resize:vertical; background:#0b0f17; color:var(--fg); border:1px solid var(--panel-border); border-radius:6px; padding:6px;"></textarea>
+              <div style="display:flex; gap:8px;">
+                <button id="copyOfferBtn" disabled>Copy Offer</button>
+                <button id="applyOfferBtn" disabled>Apply Offer</button>
+              </div>
+            </div>
+            <!-- Opponent preview -->
+            <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
+              <h4 style="margin:0; font-size:14px; color:var(--muted)">Opponent</h4>
+              <canvas id="oppBoard" width="150" height="300" style="border:1px solid var(--panel-border); border-radius:8px; background:#0b0f17"></canvas>
+              <div style="font-size:13px; color:var(--muted)">
+                Score: <span id="oppScore">0</span> &nbsp; Lines: <span id="oppLines">0</span> &nbsp; Level: <span id="oppLevel">1</span>
+              </div>
+            </div>
+          </div>
+        </section>
         </div>
       </div>
     </div>
@@ -427,10 +455,25 @@
       return type === 'I' ? (I_KICKS[key] || [[0,0]]) : (JLSTZ_KICKS[key] || [[0,0]]);
     }
 
+    /*** Seeded random number generator (mulberry32) ***/
+    // Multiplayer mode uses a shared seed so both players draw the same sequence of pieces.
+    // If no seed is provided, rng defaults to Math.random.
+    function mulberry32(a) {
+      return function() {
+        let t = a += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    // Current random function used by bag shuffling. Will be replaced by a seeded PRNG in multiplayer.
+    let rng = Math.random;
+
     /*** Random 7-bag generator ***/
     function rngShuffle(a) {
+      // Shuffle an array in-place using the current rng().
       for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(rng() * (i + 1));
         [a[i], a[j]] = [a[j], a[i]];
       }
       return a;
@@ -475,12 +518,14 @@
       tabs: {
         settings: document.getElementById('tab-settings'),
         keys: document.getElementById('tab-keys'),
-        tests: document.getElementById('tab-tests')
+        tests: document.getElementById('tab-tests'),
+        multi: document.getElementById('tab-multi')
       },
       pages: {
         settings: document.getElementById('page-settings'),
         keys: document.getElementById('page-keys'),
-        tests: document.getElementById('page-tests')
+        tests: document.getElementById('page-tests'),
+        multi: document.getElementById('page-multi')
       },
       setInputs: {
         das: document.getElementById('das'),
@@ -504,6 +549,19 @@
         Test: document.getElementById('kTest'),
         save: document.getElementById('saveKeys'),
         defaults: document.getElementById('defaultKeys')
+      },
+      // multiplayer UI elements
+      multi: {
+        hostBtn: document.getElementById('hostBtn'),
+        joinBtn: document.getElementById('joinBtn'),
+        status: document.getElementById('multiStatus'),
+        offerField: document.getElementById('offerField'),
+        copyOfferBtn: document.getElementById('copyOfferBtn'),
+        applyOfferBtn: document.getElementById('applyOfferBtn'),
+        oppBoard: document.getElementById('oppBoard'),
+        oppScore: document.getElementById('oppScore'),
+        oppLines: document.getElementById('oppLines'),
+        oppLevel: document.getElementById('oppLevel')
       },
       out: document.getElementById('testout')
     };
@@ -567,7 +625,11 @@
       mode: 'marathon',
       elapsed: 0,
       ultraLeft: 120000,
-      startTime: 0
+      startTime: 0,
+      // multiplayer attack tracking
+      combo: 0,
+      b2b: false,
+      incoming: []
     };
 
     /*** Helper functions ***/
@@ -740,6 +802,7 @@
     }
     function applyRowClear(rows) {
       const cleared = rows.length;
+      // update score and level
       state.lines += cleared;
       state.score += (SCORE_TABLE[cleared] || 0) * state.level;
       const newLevel = 1 + Math.floor(state.lines / LINES_PER_LEVEL);
@@ -747,10 +810,50 @@
         state.level = Math.min(newLevel, DROP_SPEEDS.length - 1);
         state.dropDelay = DROP_SPEEDS[state.level];
       }
-      // remove rows
+      // multiplayer: update combo, b2b and send attack lines
+      if (cleared > 0) {
+        // increment combo count
+        state.combo = state.combo + 1;
+        // compute base attack lines: 1->0, 2->1, 3->2, 4->4
+        let attack = 0;
+        if (cleared === 2) attack = 1;
+        else if (cleared === 3) attack = 2;
+        else if (cleared >= 4) attack = 4;
+        // combo bonus (starts after second clear)
+        if (state.combo > 1) attack += (state.combo - 1);
+        // back-to-back bonus: only applies to Tetris (4 lines) and persists across non-clearing moves
+        if (state.b2b && cleared >= 4) attack += 1;
+        // generate and send garbage holes to opponent
+        if (attack > 0 && net.connected) {
+          const holes = [];
+          for (let i = 0; i < attack; i++) holes.push(Math.floor(rng() * COLS));
+          send({ t: 'attack', rows: attack, holes });
+        }
+        // update b2b flag: only set true when clearing 4 or more lines; reset on 1-3 lines; persist on 0 lines
+        if (cleared >= 4) {
+          state.b2b = true;
+        } else {
+          state.b2b = false;
+        }
+      } else {
+        // no lines cleared resets combo but keeps b2b to allow T-Spin retention
+        state.combo = 0;
+        // do not modify b2b on non-clearing moves
+      }
+      // remove cleared rows
       for (const y of rows) {
         state.board.splice(y, 1);
         state.board.unshift(Array(COLS).fill(0));
+      }
+      // apply any incoming garbage lines after clearing
+      while (state.incoming && state.incoming.length > 0) {
+        const hole = state.incoming.shift();
+        // remove topmost row
+        state.board.shift();
+        // build a garbage row filled with 'G'
+        const gar = Array(COLS).fill('G');
+        gar[hole] = 0;
+        state.board.push(gar);
       }
       updateModeProgress(cleared);
     }
@@ -820,6 +923,10 @@
       state.gameOver = true;
       updateHigh();
       updatePB(true);
+      // notify opponent that we topped out
+      if (net.connected) {
+        send({ t: 'ko' });
+      }
       showOverlay('Game Over', `Score ${state.score.toLocaleString()}`);
     }
 
@@ -1020,7 +1127,7 @@
 
     /*** Tabs switching ***/
     function wireTabs() {
-      const pairs = [ ['settings','page-settings'], ['keys','page-keys'], ['tests','page-tests'] ];
+      const pairs = [ ['settings','page-settings'], ['keys','page-keys'], ['tests','page-tests'], ['multi','page-multi'] ];
       for (const [t, p] of pairs) {
         UI.tabs[t].addEventListener('click', () => {
           for (const [t2, p2] of pairs) {
@@ -1111,6 +1218,248 @@
     };
     applyKeymapToInputs();
 
+    /*** Multiplayer system ***/
+    // Networking state and helper functions. Provides a simple P2P connection over WebRTC.
+    const net = {
+      pc: null,
+      dc: null,
+      isHost: false,
+      connected: false,
+      seed: 0,
+      snapInterval: null,
+      remoteBoard: Array.from({ length: ROWS }, () => Array(COLS).fill(0)),
+      remoteScore: 0,
+      remoteLines: 0,
+      remoteLevel: 1
+    };
+
+    // Encode the local board into a string of digits (0..7) for transmission.
+    function encodeBoard() {
+      let s = '';
+      const map = { I: '1', O: '2', T: '3', S: '4', Z: '5', J: '6', L: '7', G: '8' };
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const v = state.board[y][x];
+          if (!v) s += '0';
+          else s += (map[v] || '0');
+        }
+      }
+      return s;
+    }
+    // Decode a board string back to a 2D array of piece letters.
+    function decodeBoard(str) {
+      const arr = [];
+      const rev = { '1': 'I', '2': 'O', '3': 'T', '4': 'S', '5': 'Z', '6': 'J', '7': 'L', '8': 'G' };
+      let idx = 0;
+      for (let y = 0; y < ROWS; y++) {
+        const row = [];
+        for (let x = 0; x < COLS; x++) {
+          const c = str.charAt(idx++);
+          row.push(rev[c] || 0);
+        }
+        arr.push(row);
+      }
+      return arr;
+    }
+    // Draw the opponent board on its mini canvas.
+    const oppCtx = setupHiDPICanvas(UI.multi.oppBoard, 150, 300);
+    function drawOppBoard() {
+      oppCtx.clearRect(0, 0, UI.multi.oppBoard.width, UI.multi.oppBoard.height);
+      const cell = 15;
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const v = net.remoteBoard[y][x];
+          const color = v ? COLORS[v] || COLORS.G : COLORS.G;
+          const alpha = v ? 1 : 0.15;
+          oppCtx.globalAlpha = alpha;
+          oppCtx.fillStyle = color;
+          oppCtx.fillRect(x * cell, y * cell, cell, cell);
+          oppCtx.globalAlpha = 1;
+          oppCtx.strokeStyle = 'rgba(255,255,255,0.05)';
+          oppCtx.strokeRect(x * cell + 0.5, y * cell + 0.5, cell - 1, cell - 1);
+        }
+      }
+    }
+    // Send a message via data channel if connected.
+    function send(msg) {
+      if (net.dc && net.dc.readyState === 'open') {
+        net.dc.send(JSON.stringify(msg));
+      }
+    }
+    // Handle incoming network messages.
+    function handleNetMessage(e) {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      switch (data.t) {
+        case 'seed':
+          // set shared seed and reset game
+          net.seed = data.seed;
+          rng = mulberry32(net.seed);
+          state.bag = bagGen();
+          reset(true);
+          break;
+        case 'start':
+          // both players start simultaneously
+          reset(true);
+          net.connected = true;
+          UI.multi.status.textContent = 'Playing';
+          break;
+        case 'attack':
+          // queue incoming garbage lines (holes array)
+          if (Array.isArray(data.holes)) {
+            state.incoming.push(...data.holes);
+          }
+          break;
+        case 'snap':
+          // update opponent preview
+          net.remoteScore = data.score;
+          net.remoteLines = data.lines;
+          net.remoteLevel = data.level;
+          net.remoteBoard = decodeBoard(data.board || '');
+          UI.multi.oppScore.textContent = net.remoteScore.toLocaleString();
+          UI.multi.oppLines.textContent = net.remoteLines;
+          UI.multi.oppLevel.textContent = net.remoteLevel;
+          drawOppBoard();
+          break;
+        case 'ko':
+          // opponent topped out
+          if (!state.gameOver) showOverlay('You Win', 'Opponent topped out');
+          net.connected = false;
+          UI.multi.status.textContent = 'Opponent KO';
+          break;
+      }
+    }
+    // Wire a data channel: set event handlers
+    function wireDC(dc) {
+      net.dc = dc;
+      dc.onopen = () => {
+        net.connected = true;
+        UI.multi.status.textContent = 'Connected';
+        // send seed and start when hosting
+        if (net.isHost) {
+          net.seed = Math.floor(Math.random() * 1000000000);
+          rng = mulberry32(net.seed);
+          state.bag = bagGen();
+          send({ t: 'seed', seed: net.seed });
+          // schedule start once remote acknowledges (we can send immediately for now)
+          send({ t: 'start' });
+          reset(true);
+        }
+        // start periodic snapshots
+        if (net.snapInterval) clearInterval(net.snapInterval);
+        net.snapInterval = setInterval(() => {
+          if (net.connected) send({ t: 'snap', board: encodeBoard(), score: state.score, lines: state.lines, level: state.level });
+        }, 500);
+      };
+      dc.onmessage = handleNetMessage;
+      dc.onclose = () => {
+        net.connected = false;
+        UI.multi.status.textContent = 'Disconnected';
+        if (net.snapInterval) clearInterval(net.snapInterval);
+      };
+    }
+    // Wait for ICE gathering to complete and return the local description.
+    async function gatherLocalDesc(pc) {
+      if (pc.iceGatheringState === 'complete') {
+        return pc.localDescription;
+      }
+      return new Promise(resolve => {
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete') {
+            resolve(pc.localDescription);
+          }
+        };
+      });
+    }
+    // Host: create an offer and display it for copy
+    async function hostGame() {
+      if (net.pc) return;
+      net.isHost = true;
+      net.pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      const dc = net.pc.createDataChannel('game');
+      wireDC(dc);
+      const offer = await net.pc.createOffer();
+      await net.pc.setLocalDescription(offer);
+      const desc = await gatherLocalDesc(net.pc);
+      UI.multi.offerField.value = JSON.stringify(desc);
+      UI.multi.copyOfferBtn.disabled = false;
+      UI.multi.applyOfferBtn.disabled = false;
+      UI.multi.status.textContent = 'Offer created – send to your opponent';
+    }
+    // Host: apply the answer string from opponent
+    async function applyAnswer(answerStr) {
+      if (!net.pc || !net.isHost) return;
+      try {
+        const ans = JSON.parse(answerStr);
+        await net.pc.setRemoteDescription(new RTCSessionDescription(ans));
+        UI.multi.status.textContent = 'Awaiting connection…';
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    // Join: consume offer string and produce answer
+    async function joinGame(offerStr) {
+      if (net.pc) return;
+      net.isHost = false;
+      net.pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      net.pc.ondatachannel = e => { wireDC(e.channel); };
+      try {
+        const off = JSON.parse(offerStr);
+        await net.pc.setRemoteDescription(new RTCSessionDescription(off));
+        const ans = await net.pc.createAnswer();
+        await net.pc.setLocalDescription(ans);
+        const desc = await gatherLocalDesc(net.pc);
+        UI.multi.offerField.value = JSON.stringify(desc);
+        UI.multi.copyOfferBtn.disabled = false;
+        UI.multi.applyOfferBtn.disabled = false;
+        UI.multi.status.textContent = 'Answer generated – send to host';
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // Apply the offer string on join side (the string typed into the textarea when joining)
+    async function applyOffer(offerStr) {
+      if (!net.pc || net.isHost) return;
+      try {
+        const ans = JSON.parse(offerStr);
+        await net.pc.setRemoteDescription(new RTCSessionDescription(ans));
+        UI.multi.status.textContent = 'Awaiting connection…';
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    // Copy the offer/answer from textarea to clipboard
+    async function copyOffer() {
+      try {
+        await navigator.clipboard.writeText(UI.multi.offerField.value);
+        UI.multi.status.textContent = 'Copied to clipboard';
+      } catch {}
+    }
+    // Wire up multiplayer buttons
+    UI.multi.hostBtn.onclick = () => {
+      UI.multi.copyOfferBtn.disabled = true;
+      UI.multi.applyOfferBtn.disabled = true;
+      hostGame();
+    };
+    UI.multi.joinBtn.onclick = () => {
+      UI.multi.copyOfferBtn.disabled = true;
+      UI.multi.applyOfferBtn.disabled = true;
+      const off = UI.multi.offerField.value.trim();
+      if (off) joinGame(off);
+      else UI.multi.status.textContent = 'Paste host offer then click Join';
+    };
+    UI.multi.applyOfferBtn.onclick = () => {
+      // For host: apply answer; for joiner: apply answer from remote host
+      const text = UI.multi.offerField.value.trim();
+      if (!text) return;
+      if (net.isHost) applyAnswer(text);
+      else applyOffer(text);
+    };
+    UI.multi.copyOfferBtn.onclick = () => {
+      copyOffer();
+    };
+
     /*** Mode buttons ***/
     UI.modes.marathon.onclick = () => setMode('marathon');
     UI.modes.sprint.onclick = () => setMode('sprint');
@@ -1159,6 +1508,9 @@
       state.clearUntil = 0;
       state.elapsed = 0;
       state.ultraLeft = 120000;
+      state.combo = 0;
+      state.b2b = false;
+      state.incoming = [];
       hideOverlay();
       spawn();
       updatePanels();
