@@ -989,8 +989,34 @@
 
     /*** Input handling (with DAS/ARR/SDR) ***/
     function actionForKey(key) {
+      /*
+       * Normalize both the pressed key and the stored key mapping so that
+       * alphabetic keys match regardless of case. Without this, pressing
+       * lowercase letters like "c" for hold would not match an uppercase
+       * entry in KEYMAP ("C"), causing hold and other binds to appear to
+       * malfunction. Arrow keys and other multi-character values are
+       * compared in a case-insensitive manner as well. Spaces are handled
+       * explicitly, as some keymap entries use the string "Space" while
+       * event.key yields a literal space character.
+       */
+      // Handle the literal space key separately
+      if (key === ' ') {
+        for (const [act, k] of Object.entries(KEYMAP)) {
+          if (k === ' ' || k === 'Space') return act;
+        }
+        return null;
+      }
+      const normKey = key.length === 1 ? key.toLowerCase() : key.toLowerCase();
       for (const [act, k] of Object.entries(KEYMAP)) {
-        if ((k === 'Space' && key === ' ') || key === k) return act;
+        // Map stored space variants to ' '
+        if ((k === ' ' || k === 'Space') && key === ' ') return act;
+        // For single characters (letters), compare case-insensitively
+        if (k.length === 1 && key.length === 1) {
+          if (k.toLowerCase() === normKey) return act;
+        } else {
+          // For multi-character keys like ArrowLeft, PageUp, etc.
+          if (k.toLowerCase() === normKey) return act;
+        }
       }
       return null;
     }
