@@ -399,6 +399,9 @@
     const SCORE_TABLE = { 1: 100, 2: 300, 3: 500, 4: 800 };
     const LINES_PER_LEVEL = 10;
     const DROP_SPEEDS = [0,800,700,600,520,450,390,340,300,265,235,210,190,175,160];
+    // Default gameplay settings. The lockDelay of 500ms provides a half‑second
+    // window after a piece touches the ground during which the player can
+    // move or rotate the piece (e.g. for T‑Spins) before it locks.
     const DEFAULT_SETTINGS = { das: 150, arr: 40, sdr: 40, lockDelay: 500, lockResets: 15 };
 
     /*** Tetromino definitions and rotation tables ***/
